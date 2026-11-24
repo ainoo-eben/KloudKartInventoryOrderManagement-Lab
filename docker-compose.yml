@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    container_name: kloudkart-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres      # match whatever race_test.py expects
+      POSTGRES_DB: kloudkart
+    ports:
+      - "5432:5432"                    # use "5433:5432" if 5432 is already taken on your machine
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # keeps the data between restarts
+      - ./bundle:/bundle:ro               # your bundle files, read-only inside the container
+      - ./sql:/sql:ro                     # your numbered SQL files
+volumes:
+  pgdata:

@@ -1,0 +1,17 @@
+# Kloud Kart: Python requirements
+# Install with:  pip install -r requirements.txt
+#
+# Python 3.8 or newer is needed.
+# These packages run on your host machine, not inside the Docker container.
+
+# PostgreSQL driver. Used by race_test.py (if it imports psycopg2)
+# and by your own flash-sale load-test script.
+psycopg2-binary>=2.9,<3.0
+
+# --- Only if race_test.py imports a different driver ---
+# Open race_test.py, check its import lines, and keep ONLY the matching driver.
+# Delete the psycopg2-binary line above if you switch.
+#
+# psycopg[binary]>=3.1,<4.0     # if it says: import psycopg
+# asyncpg>=0.29,<1.0            # if it says: import asyncpg
+# pg8000>=1.30,<2.0             # if it says: import pg8000
