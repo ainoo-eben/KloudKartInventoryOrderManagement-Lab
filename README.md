@@ -13,9 +13,15 @@ Folder structure:
 KloudKartInventoryOrderManagement-Lab/
 ├── data/
 ├── docs/
+├── sql/
+│   ├── 00_baseline/
+│   ├── 01_audit/
+│   ├── 02_schema_changes/
+│   ├── 03_ordering/
+│   ├── 04_reporting/
+│   └── 05_improvement/
 ├── evidence/
 ├── scripts/
-├── sql/
 ├── .venv/              (Python virtual environment, not activated)
 ├── .gitignore
 ├── README.md
