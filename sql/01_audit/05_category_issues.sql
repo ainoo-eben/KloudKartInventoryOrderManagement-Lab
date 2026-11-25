@@ -16,3 +16,19 @@ WITH RECURSIVE cat_depth AS (
 SELECT 'max category depth' AS check_name, max(depth) FROM cat_depth
 UNION ALL SELECT 'categories not reached by recursion (possible cycle)', count(*) FROM categories c
 WHERE NOT EXISTS (SELECT 1 FROM cat_depth cd WHERE cd.category_id = c.category_id);
+
+-- UNION (rather than UNION ALL) makes this reachability check terminate even
+-- if a cycle is connected to a root.
+WITH RECURSIVE reached(category_id) AS (
+    SELECT category_id FROM categories WHERE parent_id IS NULL
+    UNION
+    SELECT c.category_id
+    FROM categories c
+    JOIN reached r ON c.parent_id = r.category_id
+)
+SELECT c.category_id, c.category_name, c.parent_id
+FROM categories c
+WHERE NOT EXISTS (
+    SELECT 1 FROM reached r WHERE r.category_id = c.category_id
+)
+ORDER BY c.category_id;
