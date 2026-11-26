@@ -15,16 +15,26 @@ This directory contains the data diagnosis queries, broken into focused files by
 
 ## How to run
 
-From inside the Postgres container:
+Run from the project root in PowerShell after loading the source data. Set
+`$DbName` to the disposable database you created using the root README:
 
 ```powershell
-docker exec kloudkart-db psql -U postgres -d kloudkart -f /audit/01_nulls.sql
+$DbName = "kloudkart_lab"
+docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f /sql/01_audit/01_nulls.sql
 ```
 
-Or run all in sequence:
+To run all audit files in numeric order:
 
 ```powershell
-for /f %i in ('dir /b audit\*.sql') do docker exec kloudkart-db psql -U postgres -d kloudkart -f /audit/%i
+Get-ChildItem .\sql\01_audit\*.sql |
+    Where-Object { $_.Name -match '^\d{2}_.*\.sql$' } |
+    Sort-Object Name |
+    ForEach-Object {
+        docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f "/sql/01_audit/$($_.Name)"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Audit failed: $($_.Name)"
+        }
+    }
 ```
 
 Results are written up in `docs/01_data_diagnosis.md`, ranked by danger with detection method and business cost for each finding.

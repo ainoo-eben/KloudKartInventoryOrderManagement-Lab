@@ -4,12 +4,14 @@ These are solution scripts. Do not edit the supplied `data/schema.sql`.
 
 ## Run order
 
-Run after loading the source data, in numeric order:
+Run after loading the source data, in numeric order. Set `$DbName` to the
+disposable database used for the lab; do not apply these commands to a
+database containing records you need:
 
 ```powershell
-docker exec kloudkart-db psql -U postgres -d kloudkart -v ON_ERROR_STOP=1 -f /sql/02_schema_changes/01_id_sequences.sql
-docker exec kloudkart-db psql -U postgres -d kloudkart -v ON_ERROR_STOP=1 -f /sql/02_schema_changes/02_constraints.sql
-docker exec kloudkart-db psql -U postgres -d kloudkart -v ON_ERROR_STOP=1 -f /sql/02_schema_changes/03_indexes.sql
+docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f /sql/02_schema_changes/01_id_sequences.sql
+docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f /sql/02_schema_changes/02_constraints.sql
+docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f /sql/02_schema_changes/03_indexes.sql
 ```
 
 These scripts target the loaded `public` schema.

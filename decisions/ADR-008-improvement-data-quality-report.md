@@ -21,6 +21,8 @@ Add a data-quality exceptions report that surfaces:
 
 Stock/log exceptions must remain marked **unverified** until a trusted opening-stock baseline is established. This report surfaces exceptions; it does not silently change business data.
 
+Summarize status variants by their stored value and include the affected-order count. This keeps common capitalization or spacing differences actionable without returning tens of thousands of repetitive rows. Other findings identify their individual source row.
+
 ## Alternatives considered
 
 ### Alternative A: Automated low-stock alerts

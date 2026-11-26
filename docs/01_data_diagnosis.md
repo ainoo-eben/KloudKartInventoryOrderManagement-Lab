@@ -317,7 +317,7 @@ SELECT count(*) FROM (
 | **Overselling fix** | Must prevent *any* sale when stock ≤ 0. The current app doesn't check atomically — two concurrent orders both see 1 unit, both succeed. |
 | **Report fix** | Must decide which statuses count as spend, reconcile `orders.total_amount` with receipt lines (including missing prices and possible fees/discounts), exclude or flag dates after the August 2026 data end point, handle duplicate customers, and run in seconds. |
 | **Category rollup** | Must tolerate missing parents, cycles, and orphans, track visited categories, and not hard-code depth. |
-| **Audit trail** | Must define the opening-stock baseline, then enforce that every later stock movement has an inventory-log entry. |
+| **Audit trail** | `place_order` records new sales with their order and stock change. The current solution does not yet force direct stock updates, restocks, and corrections through a logged operation. A trusted opening-stock baseline is also needed before historical stock/log differences can be verified. |
 | **Schema changes** | Need foreign keys, check constraints, and indexes. Document every change so Nana's team can live with it. |
 
 ---
@@ -348,4 +348,4 @@ These findings feed into:
 
 - **`02_key_decisions.md`** — how we fix overselling (row-level locking in the order procedure, not triggers alone), how we make the report fast, and each assumption we made.
 - **`03_memo_to_nana.md`** — one-page business summary.
-- **`sql/02_schema_changes/`** — foreign keys, indexes, constraints, and an audit trigger so future stock movements can't happen without a log row.
+- **`sql/02_schema_changes/`** — sequences, foreign keys, indexes, and constraints. A controlled, logged path for restocks and corrections remains a production follow-up; it is not implemented by these schema changes.

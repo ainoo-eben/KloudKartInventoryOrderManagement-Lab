@@ -11,16 +11,17 @@ The function:
 
 If any database write fails after the stock update, PostgreSQL rolls back the function call's transaction, including that decrement. Order and log IDs use the sequences installed by `sql/02_schema_changes/01_id_sequences.sql`.
 
-Apply after the source load and schema-change scripts:
+Apply after the source load and schema-change scripts. Use the same disposable
+database selected in the project README:
 
 ```powershell
-docker exec kloudkart-db psql -U postgres -d kloudkart -v ON_ERROR_STOP=1 -f /sql/03_ordering/01_place_order.sql
+docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f /sql/03_ordering/01_place_order.sql
 ```
 
 Verify with the supplied test unchanged:
 
 ```powershell
-$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/kloudkart"
+$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/$DbName"
 .\.venv\Scripts\python.exe data\race_test.py
 Remove-Item Env:DATABASE_URL
 ```

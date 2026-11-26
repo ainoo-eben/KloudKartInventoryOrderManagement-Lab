@@ -19,6 +19,8 @@ The category rollup uses a recursive CTE that:
 
 Do not silently reparent the Seasonal Promotions/Promotions cycle or the Clearance category with its missing parent.
 
+The brief does not define the low-stock cutoff. Use a default threshold of 10 units, exposed as a report parameter so Nana's team can change it. Reachable categories include their reachable descendants; unreachable categories are shown with direct-product counts only, and uncategorized/orphaned products receive a separate row.
+
 ## Alternatives considered
 
 ### Alternative A: Materialized view refreshed nightly

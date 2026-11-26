@@ -76,7 +76,7 @@ For future rows, require positive order quantities and non-NULL, non-negative re
 
 **Decision:** Replace repeated per-customer subqueries with set-based aggregation and window functions. Add indexes that support customer/date order lookups, order-item joins, product/category lookups, and inventory history. Keep the report on the existing PostgreSQL server; do not solve the performance issue by buying a larger server or adding infrastructure.
 
-The category rollup will recurse from roots without assuming a fixed depth, track visited categories to stop cycles, and report unreachable categories separately. Do not silently reparent the `Seasonal Promotions`/`Promotions` cycle or the `Clearance` category with its missing parent.
+The category rollup will recurse from roots without assuming a fixed depth, track visited categories to stop cycles, and report unreachable categories separately. Use a default low-stock threshold of **10 units**, exposed as a parameter because the brief does not define the cutoff. Unreachable categories show direct-product counts only; uncategorized products are reported separately. Do not silently reparent the `Seasonal Promotions`/`Promotions` cycle or the `Clearance` category with its missing parent.
 
 ## 8. Improvement beyond the brief
 
