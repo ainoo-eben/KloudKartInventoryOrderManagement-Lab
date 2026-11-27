@@ -282,26 +282,14 @@ The supplied `data/race_test.py` is the authoritative test for order
 placement. It is run from the host, connects to the Docker database, and
 cleans up its own test fixtures. Do not edit the test.
 
-Check the server connection limit before starting. The test opens 400
-simultaneous connections:
+The test opens 400 simultaneous connections. PostgreSQL's default limit is
+100, so `docker-compose.yml` starts the server with `max_connections=500`
+(see [ADR-009](decisions/ADR-009-connection-limit.md)). If you created the
+container before this setting existed, recreate it with
+`docker compose up -d db` (the `pgdata` volume is kept). Confirm the limit:
 
 ```powershell
-$OriginalMax = (docker exec kloudkart-db psql -X -U postgres -d postgres -At -c "SHOW max_connections").Trim()
-$OriginalMax
-```
-
-In the recorded run, PostgreSQL's limit was temporarily raised from 100 to
-450 to accommodate the test, then restored. If your limit is below 450, only
-raise it on a local lab container that you can restart. This changes a
-server-wide setting and interrupts connections. Record the current value,
-temporarily set 450, restart, and wait until `pg_isready` reports ready:
-
-```powershell
-if ([int]$OriginalMax -lt 450) {
-    docker exec kloudkart-db psql -U postgres -d postgres -c "ALTER SYSTEM SET max_connections = 450;"
-    docker restart kloudkart-db
-    docker exec kloudkart-db pg_isready -U postgres
-}
+docker exec kloudkart-db psql -X -U postgres -At -c "SHOW max_connections"   # expect 500
 ```
 
 Run the test:
@@ -311,24 +299,10 @@ $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/$DbName"
 .\.venv\Scripts\python.exe data\race_test.py
 $RaceExit = $LASTEXITCODE
 Remove-Item Env:DATABASE_URL
-```
-
-If you changed the connection limit, restore the original value you recorded
-before continuing, then restart and wait for PostgreSQL to become ready:
-
-```powershell
-if ([int]$OriginalMax -lt 450) {
-    docker exec kloudkart-db psql -U postgres -d postgres -c "ALTER SYSTEM SET max_connections = $OriginalMax;"
-    docker restart kloudkart-db
-    docker exec kloudkart-db pg_isready -U postgres
-}
 if ($RaceExit -ne 0) {
     throw "The supplied race test failed."
 }
 ```
-
-Do not leave the temporary value in place. Do not restart a shared or
-production database to run this local lab test.
 
 On macOS/Linux, set the connection string and run the test with the virtual
 environment's Python:
