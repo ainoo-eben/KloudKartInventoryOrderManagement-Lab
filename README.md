@@ -17,14 +17,14 @@ The work focuses on four business needs:
 
 | Need | Implementation | Validation |
 |---|---|---|
-| Prevent overselling | `public.place_order(...)` uses a conditional stock update and writes the order, order item, and sale movement in the same transaction. Refusals say "out of stock", "product not found", or "no price set". | Supplied race test, unmodified, **3/3 consecutive passes**: 25/25 last-unit rounds; 400 buyers / 50 units → exactly 50 sold, 0 errors, 2.5–2.8 s. [race_test_runs.md](evidence/race_test_runs.md) |
+| Prevent overselling | `public.place_order(...)` uses a conditional stock update and writes the order, order item, and sale movement in the same transaction. Refusals say "out of stock", "product not found", or "no price set". | Supplied race test, unmodified, **3/3 consecutive passes**: 25/25 last-unit rounds; 400 buyers / 50 units → exactly 50 sold, 0 errors, ~3 s (2.5–3.4 s across recorded runs). [race_test_runs.md](evidence/race_test_runs.md) |
 | Audit trail of every stock movement | `public.adjust_stock(...)` for restocks, returns, corrections, damage, and stock takes (reason + note, can't go below zero). A safety-net trigger logs any other stock change as `unlogged_direct_update`; new products get an `opening_stock` movement. | 33 self-checking assertions in `sql/06_validation/01_assertions.sql`, run by `run_all.sql`. [ADR-002](decisions/ADR-002-stock-movements-legacy.md) |
 | Customer spending | `public.customer_spending_report(...)` returns every customer: lifetime total, order count, twelve zero-filled months each with 12-month and lifetime running totals, rank, and top-100 flag. | All 40,420 customers in **~3 s** (old-style report: **9.2 min**). [performance_before_after.md](evidence/performance_before_after.md) |
 | Low-stock rollup | `public.low_stock_rollup(...)` recursively follows the category tree to any depth and guards against cycles. | ~4 ms; stays correct when a 5th level is added, where a fixed-depth join loses products. [performance_before_after.md](evidence/performance_before_after.md) |
 | Data-quality review (improvement) | `public.data_quality_exceptions(...)` reports known exceptions, including stock changed outside the approved process, without modifying source data. | [data_quality_report.md](evidence/data_quality_report.md) |
 
-**One-command check:** `.\scripts\validate_all.ps1` loads a fresh database,
-runs everything including the assertions, runs the race test 3 times, times
+**One-command check:** `.\scripts\validate_all.ps1` first pre-flights the six
+CSVs, then loads a fresh database, runs everything including the assertions, runs the race test 3 times, times
 both reports, drops the database, and writes
 [final_validation.md](evidence/final_validation.md). Latest result: **PASS**.
 
@@ -59,7 +59,7 @@ but not prevented.
 |-- docs/                        Diagnosis, decisions, and memo
 |-- decisions/                   Architecture decision records
 |-- evidence/                    Captured test and performance results
-|-- scripts/                     Baseline race demonstration
+|-- scripts/                     CSV pre-flight, validation, benchmark, baseline race
 |-- docker-compose.yml
 |-- requirements.txt             Host-side Python test dependency
 `-- README.md
@@ -105,6 +105,21 @@ Get-ChildItem .\data
 
 You should see the two SQL files, `race_test.py`, and all six CSV files. If
 they are missing, get the original bundle before continuing.
+
+Then check the CSVs are safe to load (read-only, about 7 seconds):
+
+```powershell
+.\scripts\preflight_csv.ps1
+```
+
+`load.sql` maps CSV columns **by position** and skips the header without
+reading it, so a re-exported file with reordered columns (for example `price`
+and `stock_quantity` swapped) would load with no error and quietly corrupt
+every report. The pre-flight fails if any header differs from the column order
+`load.sql` expects, if any row has the wrong number of fields or a non-numeric
+ID, or if a file has fewer than 90% of the supplied extract's rows (a truncated
+export). Use `-DataDir` to check a new extract and `-MinRowRatio` to change the
+90% floor.
 
 ### 2. Create the local Python environment (for the race test)
 
@@ -328,8 +343,8 @@ Expected test results:
   stock.
 - Test 4: each successful order has its inventory movement.
 
-The recorded run completed the 400-buyer case in **2.65 seconds** with no
-errors. See [race_test_runs.md](evidence/race_test_runs.md) for the captured
+The latest recorded runs completed the 400-buyer case in **3.0–3.4 seconds**
+with no errors. See [race_test_runs.md](evidence/race_test_runs.md) for the captured
 output.
 
 ## Optional baseline experiments
@@ -394,6 +409,10 @@ to place real orders. The passing production-path test is the supplied
   function, not the checkout application. The application must call
   `place_order`; otherwise the race protection is not in effect. For flash
   sales it should also pool its database connections (ADR-009).
+- **Input files:** the CSV pre-flight checks structure (column order, field
+  counts, IDs, row counts), not meaning. A new extract with the right shape
+  but new problems (another status spelling, more orphans) loads normally;
+  those are surfaced by the audits and the data-quality exceptions report.
 - **Performance comparison:** Adwoa's original query was not supplied. The
   stand-in old-style report (9.2 min) and the new report (~3 s) are measured
   like-for-like on the same laptop, but no multiplier against her "40 minutes"
