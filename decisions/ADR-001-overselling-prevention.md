@@ -43,11 +43,16 @@ If no row is returned, the function reports failure without creating an order, o
 - **Why it is attractive:** Avoids row-level lock contention; can be faster in some scenarios.
 - **Why rejected:** Adds complexity (lock management, deadlock risk if ordering is wrong). Provides no advantage over the conditional UPDATE, which already serializes per-product via the row lock.
 
-### Alternative D: Triggers alone
+### Alternative D: Triggers alone (what Nana was told might fix it)
 
-- **How it would work:** A BEFORE INSERT trigger on order_items checks stock and raises an exception if insufficient.
+- **How it would work:** A BEFORE INSERT trigger on `order_items` checks stock and raises an exception if it is insufficient.
 - **Why it is attractive:** Centralizes logic in the database; application code stays simple.
-- **Why rejected:** A trigger does not make an application-side "read stock, then decide" sequence atomic. Concurrent requests can both pass a stale check. The conditional UPDATE makes the stock test and decrement one database operation; PostgreSQL's row lock serializes competing updates to the same product.
+- **Why rejected:** A trigger is only *where* code runs. Whether it prevents overselling depends on what the code inside does:
+  - A trigger that does `SELECT stock_quantity ...` and then decides has exactly the race Nana already has. Under READ COMMITTED, two transactions both read `1`, both pass, and both insert. Triggers get no special isolation.
+  - A trigger that does the conditional `UPDATE ... WHERE stock_quantity >= qty` *would* work, but then the atomic update is the fix and the trigger adds nothing except a less obvious place to find it.
+  - A trigger signals failure by **raising an exception**. The contract requires a clean `success = false, "out of stock"` that the caller can tell apart from a crash, and race_test.py counts a raised error as a failure. A function can return that answer; a trigger cannot.
+  - `CHECK (stock_quantity >= 0)` alone has the same problem. It stops stock going negative, but the losing buyer gets a constraint-violation error instead of "out of stock". We keep the check (as `NOT VALID`) as a backstop, not as the mechanism.
+- **Where triggers *are* the right tool:** logging stock changes that bypass the approved functions. A trigger sees every UPDATE however it was issued; see [ADR-002](ADR-002-stock-movements-legacy.md).
 
 ## Consequences
 
@@ -56,6 +61,15 @@ If no row is returned, the function reports failure without creating an order, o
 - **What it costs the client if I am wrong:** If the conditional UPDATE has a bug (e.g., wrong WHERE clause), overselling returns silently. Mitigation: race_test.py runs unmodified against the function.
 - **What would make me revisit this:** If flash-sale volumes exceed what row-level locking can handle (lock waits > target latency), consider partitioning by product or using a separate inventory service.
 
-## What this survives
+## What this survives, and what it doesn't
 
-Flash-sale spikes of ~400 orders in 10 seconds on a single product. The row lock serializes per-product, so throughput is bounded by lock acquisition speed, not by application logic.
+**Measured:** race_test.py Test 2 sends 400 simultaneous buyers at 50 units of one product. Result: exactly 50 sold, 350 told "out of stock", 0 errors. The whole burst finished in **~2.7–3.4 s** across recorded runs (the higher figure includes the stock-logging trigger from ADR-002). Marketing's flash-sale forecast is 400 orders in **10 seconds**, so the database finishes the burst in about a third of the window. See [race_test_runs.md](../evidence/race_test_runs.md).
+
+**Why it holds:** every buyer of the same product queues on that product's row lock. Each order holds the lock only for one UPDATE plus three small INSERTs, then commits. Buyers of *different* products don't wait for each other at all. A refused buyer waits only for the lock, then gets an immediate "out of stock"; nothing is retried.
+
+**Limits, in the order they would bite on flash-sale day:**
+1. **Connections, not locks.** 400 buyers at once means 400 database connections. PostgreSQL's default limit is 100; past it, buyers get "too many clients", which is a crash, not "out of stock". Docker Compose now sets `max_connections = 500` ([ADR-009](ADR-009-connection-limit.md)). The real fix for production is a small connection pool in the application, so 400 shoppers share ~20–50 connections and queue in the app instead of failing.
+2. **One hot row.** All buyers of one product queue on one row. At ~3 s per 400 orders that is ~130 orders/s for a single product on a laptop. That is ample for the forecast, but it's a ceiling: a sale 10× bigger on one product would need stock split into buckets, or a reservation queue.
+3. **Checkout integration.** The protection exists only if checkout calls `place_order`. An application that still writes to `orders` directly bypasses it. The stock-logging trigger would at least record such changes, but it cannot refuse them.
+
+**What a naive build would have cost later:** a read-then-write check in application code (or in a trigger) passes every normal-traffic test. It fails only under contention, which means it fails on flash-sale day: the highest-traffic, highest-visibility moment, when overselling the headline product costs the most refunds and reviews.

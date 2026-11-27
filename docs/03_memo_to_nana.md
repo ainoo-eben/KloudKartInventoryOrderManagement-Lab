@@ -1,36 +1,24 @@
 # A note for Nana
 
-**Subject: Safer orders and clearer stock and sales reports**
+**Subject: Overselling fixed, Monday report in seconds, and what I found in the data**
 
-I reviewed the sample inventory and order records and built a safer order
-process, updated reports, and a report that flags data issues for follow-up.
+**What I built.** Placing an order now checks and takes the stock in one step, so two customers can never get the same last unit. When 400 test shoppers rushed 50 units, exactly 50 bought and 350 were told "out of stock" at once, in about 3 seconds: well inside marketing's 10-second flash-sale estimate. Every stock change (sale, restock, correction, damaged goods) now leaves a record of what changed, when, and why. A change made outside the proper process is still recorded, with the login that made it, and flagged for follow-up. Adwoa's Monday report now covers every customer in about 3 seconds on an ordinary laptop, including the running totals she keeps by hand. The low-stock view by category is instant.
 
-The main risk was that two customers could buy the same last item at nearly
-the same time. The new order process checks and reduces stock as one protected
-step, and records the order, its items, and the stock movement together. The
-provided race test passed: when 400 buyers competed for 50 available units, 50
-orders succeeded and 350 were correctly refused. The checkout application
-must use this new process for the protection to apply.
+**Your two questions.**
+- *Would "triggers" have fixed overselling?* No, not on their own. They can be written with the same flaw you have today. The fix is making "check stock" and "take stock" one step. I did use triggers for the stock records, which is the job they're good at.
+- *Do you need the bigger server?* No. The report was slow mainly because the system had no quick way to find a customer's orders, so it re-read every order for every customer. On my laptop the old method takes about 9 minutes, and its time grows with every new customer; the new one takes about 3 seconds.
 
-The customer spending report now completed in about 3.85 seconds on the sample
-data and returns all customers, monthly totals, and the top 100 ranking. The
-older-style comparison query did not finish within two minutes. It was a
-stand-in, not the original Monday report, so these results do not prove an
-exact speedup against Adwoa's report.
+**What I found.** The biggest risks, in cedis:
+1. Order statuses are typed in 15 different ways. A report that only looks for "completed" misses **GHS 314 million** of real sales, and one that ignores status counts **GHS 106 million** of cancelled, refunded or pending orders as sales.
+2. **14 products** already show less than zero stock (**GHS 20,600** of goods sold that didn't exist).
+3. For **144 products**, the stock count and the stock records disagree (up to **GHS 3.9 million**). I can't tell which is right without a physical count.
+4. **1,068 customer accounts** share an email address with another, so some customers' spending (**GHS 9.7 million** in total) may be split across several accounts.
 
-The stock report can show products at or below 10 units by category; the cutoff
-can be changed. A separate data-quality report lists unusual statuses, totals
-that do not match receipt lines, missing prices or links, dates beyond the
-chosen cutoff, and stock records that need review. It reports issues but does
-not change them.
+**What I recommend next.**
+1. Make sure the checkout and any stock-editing tools use the new ordering and stock-adjustment steps. The protection only works if they do.
+2. Before the first flash sale, have the checkout share a small, fixed number of connections to the stock system instead of one per shopper, and rehearse once at full volume.
+3. Count the 144 mismatched products and the 14 negative ones, and record the counts properly.
+4. Confirm what each order status means and whether "shipped" counts as a sale.
+5. Then remove direct editing of stock levels, so the proper process is the only way in.
 
-Some old records cannot safely be corrected from this extract alone. In
-particular, stock movements do not establish each product's starting balance,
-so a difference between current stock and logged movements is unverified.
-Please confirm the starting stock, unusual order statuses, and the intended
-report cutoff before treating those records as corrected business facts. The
-report also relies on the recorded order total and treats completed, complete,
-and shipped orders as spending.
-
-The new SQL has been tested on a separate fresh-load database. The existing
-database was not changed.
+**What I can't stand behind yet.** The 144 stock differences are unverified until counted. Spending uses the order total recorded at checkout, which disagrees with the itemised lines on 2,426 orders. Orders dated after 31 August 2026 are held back as suspect. All timings come from my laptop, not your server.

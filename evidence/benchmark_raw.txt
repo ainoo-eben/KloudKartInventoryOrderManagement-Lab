@@ -1,0 +1,27 @@
+﻿Benchmark run 2026-11-27T08:49:01
+Host: 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz, 31.7 GB RAM; Docker container kloudkart-db
+Server: PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+Database: kloudkart_bench_20261127084900 (disposable, dropped afterwards); median of 3 runs
+
+== Original schema (supplied schema.sql + load.sql, primary keys only) ==
+naive report, 500 customers, no indexes                        median      7,334.1 ms   runs: 7,334.1, 7,119.7, 7,343.6
+naive report, 1000 customers, no indexes                       median     14,730.9 ms   runs: 14,730.9, 14,556.9, 14,909.8
+naive report, 2000 customers, no indexes                       median     29,283.2 ms   runs: 29,283.2, 33,003.2, 29,205.5
+naive report, extrapolated to 40,420 customers            ~ 593 s (~9.9 min) at 14.68 ms/customer
+new report, all customers, no indexes                          median      3,036.6 ms   runs: 3,084.7, 3,036.6, 2,795.2
+recursive rollup, no indexes                                   median          3.7 ms   runs: 4.0, 3.7, 3.6
+fixed-depth (naive) rollup, no indexes                         median          1.8 ms   runs: 2.4, 1.4, 1.8
+
+== Full naive report on original schema (timeout 60 min) ==
+naive report, all customers, no indexes: Execution Time: 552178.030 ms
+
+== After sql/02_schema_changes/03_indexes.sql ==
+naive report, all customers, WITH indexes                      median      1,121.2 ms   runs: 1,183.7, 1,111.7, 1,121.2
+new report, all customers, WITH indexes                        median      2,676.1 ms   runs: 2,678.8, 2,676.1, 2,674.7
+recursive rollup, WITH indexes                                 median          3.9 ms   runs: 4.1, 3.5, 3.9
+
+== Depth-5 correctness demo (rolled back) ==
+         scenario         | recursive_before | recursive_after | fixed_depth_before | fixed_depth_after | max_depth_now 
+--------------------------+------------------+-----------------+--------------------+-------------------+---------------
+ after adding a 5th level |             1931 |            1931 |               1931 |              1930 |             5
+(1 row)

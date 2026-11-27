@@ -17,16 +17,21 @@ The work focuses on four business needs:
 
 | Need | Implementation | Validation |
 |---|---|---|
-| Prevent overselling | `public.place_order(...)` uses a conditional stock update and writes the order, order item, and sale movement in the same transaction. | The supplied race test passed 25 last-unit rounds and a 400-buyer/50-unit sale. See [race-test evidence](evidence/race_test_runs.md). |
-| Customer spending | `public.customer_spending_report(...)` returns customers, lifetime totals, order counts, twelve calendar-month totals, running monthly totals, and top-100 ranking. | 40,420 customers returned in about 3.85 seconds on the validation machine. See [reporting evidence](evidence/reporting_after.md). |
-| Low-stock rollup | `public.low_stock_rollup(...)` recursively follows the category tree and guards against cycles. | 95 output rows in about 6 ms on the validation machine. |
-| Data-quality review | `public.data_quality_exceptions(...)` reports known exceptions without modifying source data. | See [data-quality evidence](evidence/data_quality_report.md). |
+| Prevent overselling | `public.place_order(...)` uses a conditional stock update and writes the order, order item, and sale movement in the same transaction. Refusals say "out of stock", "product not found", or "no price set". | Supplied race test, unmodified, **3/3 consecutive passes**: 25/25 last-unit rounds; 400 buyers / 50 units → exactly 50 sold, 0 errors, 2.5–2.8 s. [race_test_runs.md](evidence/race_test_runs.md) |
+| Audit trail of every stock movement | `public.adjust_stock(...)` for restocks, returns, corrections, damage, and stock takes (reason + note, can't go below zero). A safety-net trigger logs any other stock change as `unlogged_direct_update`; new products get an `opening_stock` movement. | 33 self-checking assertions in `sql/06_validation/01_assertions.sql`, run by `run_all.sql`. [ADR-002](decisions/ADR-002-stock-movements-legacy.md) |
+| Customer spending | `public.customer_spending_report(...)` returns every customer: lifetime total, order count, twelve zero-filled months each with 12-month and lifetime running totals, rank, and top-100 flag. | All 40,420 customers in **~3 s** (old-style report: **9.2 min**). [performance_before_after.md](evidence/performance_before_after.md) |
+| Low-stock rollup | `public.low_stock_rollup(...)` recursively follows the category tree to any depth and guards against cycles. | ~4 ms; stays correct when a 5th level is added, where a fixed-depth join loses products. [performance_before_after.md](evidence/performance_before_after.md) |
+| Data-quality review (improvement) | `public.data_quality_exceptions(...)` reports known exceptions, including stock changed outside the approved process, without modifying source data. | [data_quality_report.md](evidence/data_quality_report.md) |
+
+**One-command check:** `.\scripts\validate_all.ps1` loads a fresh database,
+runs everything including the assertions, runs the race test 3 times, times
+both reports, drops the database, and writes
+[final_validation.md](evidence/final_validation.md). Latest result: **PASS**.
 
 These are lab results, not a production deployment. The checkout application
-must call `place_order` for the overselling protection to apply. Also, only
-sales made through that function are guaranteed to write an inventory-log
-entry; other stock changes, such as restocks or corrections, are not yet
-centrally forced through a logged operation.
+must call `place_order`, and stock tools should call `adjust_stock`, for the
+protections to apply. Changes that bypass them are still logged and flagged,
+but not prevented.
 
 ## Project layout
 
@@ -46,9 +51,10 @@ centrally forced through a logged operation.
 |   |-- 00_baseline/             Starting counts and deliberately unsafe examples
 |   |-- 01_audit/                Read-only data-quality checks
 |   |-- 02_schema_changes/       Sequences, constraints, and indexes
-|   |-- 03_ordering/             Atomic order placement
+|   |-- 03_ordering/             Atomic order placement and logged stock adjustments
 |   |-- 04_reporting/            Customer and low-stock reports
 |   |-- 05_improvement/          Data-quality exceptions report
+|   |-- 06_validation/           Self-checking assertions (rolled back)
 |   `-- run_all.sql              Fresh-load solution runner
 |-- docs/                        Diagnosis, decisions, and memo
 |-- decisions/                   Architecture decision records
@@ -204,7 +210,8 @@ docker exec kloudkart-db psql -X -U postgres -d $DbName -c "SELECT count(*) AS c
 
 Expected on the supplied data: **40,420 customers**, **100 top-100 flags**,
 and ranks ending at **40,420**. The report's measured runtime was about
-**3.85 seconds** on the validation machine. Timings vary with hardware.
+**3 seconds** on the validation machine (see
+[performance_before_after.md](evidence/performance_before_after.md)). Timings vary with hardware.
 
 The result uses stored `orders.total_amount` and counts normalized
 `completed`, `complete`, and `shipped` statuses as spending. It excludes
@@ -235,7 +242,7 @@ Reachable categories include reachable descendants. A product can therefore
 appear in several ancestor totals; do not add every category's count to get a
 distinct product total. Unreachable categories receive direct-product counts
 only, and unassigned products appear in their own row. The validated runtime
-was about **6 ms**.
+was about **4 ms**.
 
 ### Data-quality exceptions report
 
@@ -282,26 +289,14 @@ The supplied `data/race_test.py` is the authoritative test for order
 placement. It is run from the host, connects to the Docker database, and
 cleans up its own test fixtures. Do not edit the test.
 
-Check the server connection limit before starting. The test opens 400
-simultaneous connections:
+The test opens 400 simultaneous connections. PostgreSQL's default limit is
+100, so `docker-compose.yml` starts the server with `max_connections=500`
+(see [ADR-009](decisions/ADR-009-connection-limit.md)). If you created the
+container before this setting existed, recreate it with
+`docker compose up -d db` (the `pgdata` volume is kept). Confirm the limit:
 
 ```powershell
-$OriginalMax = (docker exec kloudkart-db psql -X -U postgres -d postgres -At -c "SHOW max_connections").Trim()
-$OriginalMax
-```
-
-In the recorded run, PostgreSQL's limit was temporarily raised from 100 to
-450 to accommodate the test, then restored. If your limit is below 450, only
-raise it on a local lab container that you can restart. This changes a
-server-wide setting and interrupts connections. Record the current value,
-temporarily set 450, restart, and wait until `pg_isready` reports ready:
-
-```powershell
-if ([int]$OriginalMax -lt 450) {
-    docker exec kloudkart-db psql -U postgres -d postgres -c "ALTER SYSTEM SET max_connections = 450;"
-    docker restart kloudkart-db
-    docker exec kloudkart-db pg_isready -U postgres
-}
+docker exec kloudkart-db psql -X -U postgres -At -c "SHOW max_connections"   # expect 500
 ```
 
 Run the test:
@@ -311,24 +306,10 @@ $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/$DbName"
 .\.venv\Scripts\python.exe data\race_test.py
 $RaceExit = $LASTEXITCODE
 Remove-Item Env:DATABASE_URL
-```
-
-If you changed the connection limit, restore the original value you recorded
-before continuing, then restart and wait for PostgreSQL to become ready:
-
-```powershell
-if ([int]$OriginalMax -lt 450) {
-    docker exec kloudkart-db psql -U postgres -d postgres -c "ALTER SYSTEM SET max_connections = $OriginalMax;"
-    docker restart kloudkart-db
-    docker exec kloudkart-db pg_isready -U postgres
-}
 if ($RaceExit -ne 0) {
     throw "The supplied race test failed."
 }
 ```
-
-Do not leave the temporary value in place. Do not restart a shared or
-production database to run this local lab test.
 
 On macOS/Linux, set the connection string and run the test with the virtual
 environment's Python:
@@ -359,9 +340,10 @@ of `run_all.sql`.
 ### Slow baseline report
 
 `sql/00_baseline/02_naive_report.sql` uses `EXPLAIN ANALYZE`, which executes
-the deliberately naive query. It may run for a long time. On the validation
-data it did not finish within a 120-second statement timeout. Run only on a
-disposable database:
+the deliberately naive query. It may run for a long time. The like-for-like
+version (every customer) measured **552 s (9.2 min)** on the supplied schema;
+`scripts/benchmark.ps1 -FullNaiveBaseline` reproduces it together with the
+index ablation and the depth-5 rollup demo. Run only on a disposable database:
 
 ```powershell
 docker exec kloudkart-db psql -X -U postgres -d $DbName -c "SET statement_timeout = '120s';" -f /sql/00_baseline/02_naive_report.sql
@@ -403,16 +385,20 @@ to place real orders. The passing production-path test is the supplied
 - **Historical stock:** negative stock and legacy orphan records are
   preserved, not silently corrected. The inventory log does not provide a
   confirmed opening balance, so the 144 stock/log differences are unverified.
-- **Movement logging:** `place_order` logs its sales atomically. The current
-  solution does not automatically log every direct stock update, restock, or
-  correction. A production rollout needs a controlled, logged path for all
-  stock changes.
+- **Movement logging:** every new stock change is logged (sales by
+  `place_order`, other movements by `adjust_stock`, anything else by the
+  safety-net trigger). The trigger records but does not *prevent* direct
+  edits; revoking direct `UPDATE` on `products` is the recommended next step
+  once Kloud Kart's database roles are known (ADR-002).
 - **Application integration:** the repository contains the database
   function, not the checkout application. The application must call
-  `place_order`; otherwise the race protection is not in effect.
-- **Performance comparison:** the supplied brief did not include Adwoa's
-  original query. The baseline is a proxy that timed out, so do not claim an
-  exact before/after speedup.
+  `place_order`; otherwise the race protection is not in effect. For flash
+  sales it should also pool its database connections (ADR-009).
+- **Performance comparison:** Adwoa's original query was not supplied. The
+  stand-in old-style report (9.2 min) and the new report (~3 s) are measured
+  like-for-like on the same laptop, but no multiplier against her "40 minutes"
+  is claimed. The missing index was the main cause of the slowness; see
+  [performance_before_after.md](evidence/performance_before_after.md).
 
 For the full findings, assumptions, and recommendations, see
 [the diagnosis](docs/01_data_diagnosis.md),

@@ -326,6 +326,28 @@ BEGIN
     FROM public.products AS p
     LEFT JOIN inventory_totals AS it
       ON it.product_id = p.product_id
-    WHERE p.stock_quantity IS DISTINCT FROM coalesce(it.logged_net_change, 0);
+    WHERE p.stock_quantity IS DISTINCT FROM coalesce(it.logged_net_change, 0)
+
+    UNION ALL
+
+    -- Stock changed outside adjust_stock/place_order. The safety-net trigger
+    -- in sql/03_ordering/02_stock_movements.sql recorded who and when; the
+    -- business reason is missing and should be confirmed.
+    SELECT
+        'stock_changed_outside_approved_process'::text,
+        'inventory_log'::text,
+        il.log_id::bigint,
+        jsonb_build_object(
+            'product_id', il.product_id,
+            'change_qty', il.change_qty,
+            'created_at', il.created_at,
+            'note', il.note
+        ),
+        'confirm the business reason with whoever made the change'::text,
+        $$SELECT log_id, product_id, change_qty, created_at, note
+          FROM inventory_log
+          WHERE reason = 'unlogged_direct_update'$$::text
+    FROM public.inventory_log AS il
+    WHERE il.reason = 'unlogged_direct_update';
 END;
 $function$;

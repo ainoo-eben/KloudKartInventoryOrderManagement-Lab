@@ -19,7 +19,7 @@ SELECT *
 FROM public.customer_spending_report(DATE '2026-08-31');
 ```
 
-The function returns every customer, including customers with no qualifying orders. It includes lifetime spend/order count through the as-of date, twelve calendar-month spend values with a cumulative total across that 12-month window, deterministic rank by lifetime spend (customer ID breaks ties), and an `is_top_100` flag. The default as-of date is `2026-08-31`. Orders that reference missing customers cannot be attributed and are excluded from customer rows; the data-quality exceptions report surfaces those orphans.
+The function returns every customer, including customers with no qualifying orders. It includes lifetime spend/order count through the as-of date, twelve calendar-month spend values, each carrying two running totals (`running_spend`: cumulative inside the 12-month window; `lifetime_running_spend`: cumulative since the customer's first order, so the final month always equals `total_spent` — the brief's "running per-customer total" is ambiguous, so both readings are provided; on this extract 1,602 customers have spend before the window, so the two differ), deterministic rank by lifetime spend (customer ID breaks ties), and an `is_top_100` flag. The default as-of date is `2026-08-31`. Orders that reference missing customers cannot be attributed and are excluded from customer rows; the data-quality exceptions report surfaces those orphans.
 
 Per ADR-003 and ADR-004, it counts normalized `completed`, `complete`, and `shipped` statuses and sums the recorded `orders.total_amount`. Other statuses are excluded. The query makes that rule explicit; it does not repair stored statuses or totals.
 

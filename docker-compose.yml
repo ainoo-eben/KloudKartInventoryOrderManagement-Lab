@@ -2,6 +2,10 @@ services:
   db:
     image: postgres:16
     container_name: kloudkart-db
+    # race_test.py opens 400 simultaneous connections (flash-sale test).
+    # PostgreSQL's default of 100 makes ~300 of them fail with "too many
+    # clients". 500 leaves headroom for psql/admin sessions. See ADR-009.
+    command: ["postgres", "-c", "max_connections=500"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres      # match whatever race_test.py expects

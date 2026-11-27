@@ -10,7 +10,16 @@ Adwoa's weekly customer-spending report takes ~40 minutes and sometimes doesn't 
 
 ## Decision
 
-Replace repeated per-customer subqueries with set-based aggregation and window functions. Add indexes that support customer/date order lookups, order-item joins, product/category lookups, and inventory history. Keep the report on the existing PostgreSQL server.
+Replace repeated per-customer subqueries with set-based aggregation and window functions: read the qualifying orders **once**, group them by customer and month, then compute running totals and the rank with window functions. Add indexes that support customer/date order lookups, order-item joins, product/category lookups, and inventory history. Keep the report on the existing PostgreSQL server.
+
+**Measured** ([performance_before_after.md](../evidence/performance_before_after.md), all 40,420 customers, laptop):
+
+| | No indexes | With indexes |
+|---|---:|---:|
+| Old-style per-customer report | 552 s (9.2 min) | 1.1 s |
+| New set-based report | 3.0 s | 2.7 s |
+
+The root cause was the missing index on `orders.customer_id`, combined with a query shape that re-reads all orders for every customer (~19 billion row visits). Either fix alone brings the time to seconds. The rewrite is kept because the old shape is also *wrong* (it counts cancelled/refunded/pending money and has no cutoff, no zero-filled months and no lifetime running total), and because the rewrite's speed does not depend on an index.
 
 The category rollup uses a recursive CTE that:
 - Recurses from roots without assuming a fixed depth
@@ -27,7 +36,7 @@ The brief does not define the low-stock cutoff. Use a default threshold of 10 un
 
 - **How it would work:** Pre-compute the report as a materialized view, refreshed on a schedule.
 - **Why it is attractive:** Fastest reads; report is instant.
-- **Why rejected:** Stale during the day. Nana needs current data for decisions. Also adds refresh complexity and storage.
+- **Why rejected:** It solves a problem we no longer have. The live report takes ~3 seconds and runs once a week, so pre-computing it saves 3 seconds while adding a refresh job someone must schedule, monitor and remember after handover. A forgotten refresh is worse than a slow report: it silently shows last week's numbers as if they were current. Revisit only if the live report ever exceeds the budget.
 
 ### Alternative B: ltree extension (materialized path for categories)
 
@@ -51,15 +60,15 @@ The brief does not define the low-stock cutoff. Use a default threshold of 10 un
 
 - **How it would work:** Purchase a more powerful PostgreSQL server.
 - **Why it is attractive:** Brute-force solution; no code changes.
-- **Why rejected:** Nana's constraint: no new infrastructure, no monthly bill. The brief explicitly says "someone already priced a bigger server; neither guess has convinced him."
+- **Why rejected:** It attacks the wrong thing. The old report did ~19 billion row visits because of a missing index; a faster CPU makes each visit a little cheaper, not fewer, so minutes would stay minutes and keep growing with every new customer. The measured fix (an index, or the rewrite) gets seconds on a laptop at no cost. It would also break Nana's "no new monthly bill" constraint.
 
 ## Consequences
 
 - **What this buys:** Report runs in seconds on existing hardware. Category rollup handles arbitrary depth, cycles, and orphans gracefully.
-- **What this costs:** Complex SQL (window functions, recursive CTEs) that Nana's team must maintain. Performance depends on proper indexes.
-- **What it costs the client if I am wrong:** If indexes are missing or wrong, the report is still slow. Mitigation: before/after timing measurements documented in a measurement report.
+- **What this costs:** Complex SQL (window functions, recursive CTEs) that Nana's team must maintain. Six new indexes add a little work to every insert. That is negligible at 4,000 orders/day and measured as harmless under the 400-buyer race test.
+- **What it costs the client if I am wrong:** If the status or amount rules are wrong (ADR-003/004), the report is fast and wrong, which is why those rules are explicit and one line each to change. Speed does not depend on the indexes (3.0 s without them), so a dropped index won't bring back 9-minute Mondays.
 - **What would make me revisit this:** If window functions can't meet the latency target even with proper indexes, consider a materialized view with incremental refresh.
 
 ## What this survives
 
-Flash-sale volumes (~400 orders in 10 seconds). The set-based approach scales with data size, not with per-customer query count. The recursive CTE handles any tree depth marketing adds.<|end|>
+Growth: the set-based report's cost grows with the number of orders, not customers × orders, so doubling both roughly doubles a ~3 s report rather than quadrupling a 9-minute one. Tree growth: a rolled-back demo adds a 5th category level; a fixed 4-level join silently loses a product (1,931 → 1,930), while the recursive rollup keeps all 1,931 ([06_rollup_depth5_demo.sql](../sql/00_baseline/06_rollup_depth5_demo.sql)). The rollup runs in ~4 ms. Flash sales don't touch the report directly: it reads committed data and takes no locks that block `place_order`.<|end|>
