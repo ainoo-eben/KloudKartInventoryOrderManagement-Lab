@@ -34,6 +34,10 @@ SELECT
     coalesce(sum(p.stock_quantity), 0)::bigint AS low_stock_units
 FROM categories a
 LEFT JOIN ancestor_pairs ap ON ap.ancestor_id = a.category_id
+-- The low-stock filter is in the ON clause (not WHERE) so categories with no
+-- low-stock products still appear with 0. Both output columns therefore count
+-- LOW-STOCK products only (stock <= 10), not all products in the category,
+-- matching low_stock_rollup(10).
 LEFT JOIN products p
        ON p.category_id = ap.descendant_id
       AND p.stock_quantity <= 10

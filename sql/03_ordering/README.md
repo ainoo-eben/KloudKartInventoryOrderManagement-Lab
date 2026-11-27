@@ -21,6 +21,8 @@ docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f /s
 Verify with the supplied test unchanged:
 
 ```powershell
+# Local lab credentials for the disposable Docker database only; never reuse
+# this connection string outside it.
 $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/$DbName"
 .\.venv\Scripts\python.exe data\race_test.py
 Remove-Item Env:DATABASE_URL

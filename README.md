@@ -17,16 +17,24 @@ The work focuses on four business needs:
 
 | Need | Implementation | Validation |
 |---|---|---|
-| Prevent overselling | `public.place_order(...)` uses a conditional stock update and writes the order, order item, and sale movement in the same transaction. Refusals say "out of stock", "product not found", or "no price set". | Supplied race test, unmodified, **3/3 consecutive passes**: 25/25 last-unit rounds; 400 buyers / 50 units → exactly 50 sold, 0 errors, ~3 s (2.5–3.4 s across recorded runs). [race_test_runs.md](evidence/race_test_runs.md) |
+| Prevent overselling | `public.place_order(...)` uses a conditional stock update and writes the order, order item, and sale movement in the same transaction. Refusals say "out of stock", "product not found", or "no price set". | Supplied race test, unmodified, **3/3 consecutive passes**: 25/25 last-unit rounds; 400 buyers / 50 units → exactly 50 sold, 0 errors, ~3 s (2.5–3.7 s across recorded runs). [race_test_runs.md](evidence/race_test_runs.md) |
 | Audit trail of every stock movement | `public.adjust_stock(...)` for restocks, returns, corrections, damage, and stock takes (reason + note, can't go below zero). A safety-net trigger logs any other stock change as `unlogged_direct_update`; new products get an `opening_stock` movement. | 33 self-checking assertions in `sql/06_validation/01_assertions.sql`, run by `run_all.sql`. [ADR-002](decisions/ADR-002-stock-movements-legacy.md) |
 | Customer spending | `public.customer_spending_report(...)` returns every customer: lifetime total, order count, twelve zero-filled months each with 12-month and lifetime running totals, rank, and top-100 flag. | All 40,420 customers in **~3 s** (old-style report: **9.2 min**). [performance_before_after.md](evidence/performance_before_after.md) |
 | Low-stock rollup | `public.low_stock_rollup(...)` recursively follows the category tree to any depth and guards against cycles. | ~4 ms; stays correct when a 5th level is added, where a fixed-depth join loses products. [performance_before_after.md](evidence/performance_before_after.md) |
 | Data-quality review (improvement) | `public.data_quality_exceptions(...)` reports known exceptions, including stock changed outside the approved process, without modifying source data. | [data_quality_report.md](evidence/data_quality_report.md) |
 
 **One-command check:** `.\scripts\validate_all.ps1` first pre-flights the six
-CSVs, then loads a fresh database, runs everything including the assertions, runs the race test 3 times, times
-both reports, drops the database, and writes
-[final_validation.md](evidence/final_validation.md). Latest result: **PASS**.
+CSVs, then loads a fresh disposable database, runs everything including the
+assertions, runs the race test 3 times, times both reports, drops the
+database, and writes [final_validation.md](evidence/final_validation.md).
+Latest result: **PASS**.
+
+The script is PowerShell and was tested on **Windows** (PowerShell 5.1). On
+macOS/Linux, install PowerShell 7 and run `pwsh ./scripts/validate_all.ps1`.
+It is written to be cross-platform (it finds `.venv/bin/python`), but that
+has not been tested; the manual steps under
+[Reproduce the complete solution](#reproduce-the-complete-solution) work on
+any OS.
 
 These are lab results, not a production deployment. The checkout application
 must call `place_order`, and stock tools should call `adjust_stock`, for the
@@ -60,8 +68,9 @@ but not prevented.
 |-- decisions/                   Architecture decision records
 |-- evidence/                    Captured test and performance results
 |-- scripts/                     CSV pre-flight, validation, benchmark, baseline race
-|-- docker-compose.yml
-|-- requirements.txt             Host-side Python test dependency
+|-- docker-compose.yml           PostgreSQL 16.16 pinned by digest, max_connections=500
+|-- .env.example                 Optional local password override (copy to .env)
+|-- requirements.txt             Host-side Python test dependency (exact pin)
 `-- README.md
 ```
 
@@ -89,9 +98,13 @@ supplied CSVs. The Docker Compose file mounts the source bundle read-only.
   work on macOS/Linux after adapting shell-variable and environment-variable
   syntax.
 
-The Compose file starts PostgreSQL 16 with local lab credentials
-(`postgres` / `postgres`). These credentials are for local testing only, not
-for a public or production server.
+The Compose file starts PostgreSQL 16.16 (pinned by image digest, so reruns
+use the exact image the recorded timings came from) with local lab
+credentials (`postgres` / `postgres`). These credentials are for local testing
+only, not for a public or production server. To use a different password,
+copy `.env.example` to `.env` (ignored by Git) before the first
+`docker compose up`; set the same `POSTGRES_PASSWORD` in your shell for
+`validate_all.ps1`, and use it in the `DATABASE_URL` examples below.
 
 ## Reproduce the complete solution
 
@@ -175,22 +188,25 @@ disposable.
 ### 5. Load, audit, and install the solution
 
 ```powershell
-docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -f /sql/run_all.sql
+docker exec kloudkart-db psql -X -U postgres -d $DbName -v ON_ERROR_STOP=1 -v confirm_reload=yes -f /sql/run_all.sql
 if ($LASTEXITCODE -ne 0) {
     throw "The SQL runner failed. Read the PostgreSQL error above before continuing."
 }
 ```
 
 `-X` prevents a local `psql` startup file from changing the run, and
-`ON_ERROR_STOP=1` stops at the first SQL error. The runner performs these
-steps in order:
+`ON_ERROR_STOP=1` stops at the first SQL error. `confirm_reload=yes` is your
+confirmation that `$DbName` is disposable: without it the runner refuses to
+start, and it always refuses the persistent `kloudkart` database. The runner
+performs these steps in order:
 
 1. Recreates the six source tables from `data/schema.sql`.
 2. Loads the CSVs using the supplied `data/load.sql`.
-3. Prints the baseline row counts and runs the eight read-only audit files.
+3. Prints the baseline row counts and runs the nine read-only audit files.
 4. Adds ID sequences, non-validating constraints, and indexes.
-5. Installs `place_order`, the two business reports, and the data-quality
-   exceptions function.
+5. Installs `place_order`, `adjust_stock` and the stock-logging trigger, the
+   two business reports, and the data-quality exceptions function.
+6. Runs the self-checking assertions (in a transaction that is rolled back).
 
 Expected source row counts:
 
@@ -314,7 +330,9 @@ container before this setting existed, recreate it with
 docker exec kloudkart-db psql -X -U postgres -At -c "SHOW max_connections"   # expect 500
 ```
 
-Run the test:
+Run the test. The `DATABASE_URL` below embeds the local lab credentials
+(`postgres:postgres`). Use it only for this disposable Docker database and
+never copy it into a shared environment, script, or configuration file:
 
 ```powershell
 $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/$DbName"
@@ -343,7 +361,7 @@ Expected test results:
   stock.
 - Test 4: each successful order has its inventory movement.
 
-The latest recorded runs completed the 400-buyer case in **3.0–3.4 seconds**
+The latest recorded runs completed the 400-buyer case in **2.7–3.7 seconds**
 with no errors. See [race_test_runs.md](evidence/race_test_runs.md) for the captured
 output.
 
@@ -373,13 +391,12 @@ and [reporting_after.md](evidence/reporting_after.md).
 ### Deliberately unsafe race demonstration
 
 The optional `scripts/run_baseline_race.ps1` demonstrates a check-then-update
-race in a separate schema and removes that schema afterwards. **The script
-currently targets the database named `kloudkart`, not `$DbName`.** It only
-creates and drops the `kloudkart_baseline_race` fixture schema, but run it
-only against a local database you are comfortable using for a test:
+race in a separate `kloudkart_baseline_race` schema and drops that schema
+afterwards; it never touches the solution tables. The target database is a
+required parameter, and the script stops if that database does not exist:
 
 ```powershell
-.\scripts\run_baseline_race.ps1
+.\scripts\run_baseline_race.ps1 -DbName $DbName
 ```
 
 The expected demonstration is two successful attempts for one unit and a

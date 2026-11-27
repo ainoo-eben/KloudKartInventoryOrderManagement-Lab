@@ -73,7 +73,7 @@ FROM products WHERE stock_quantity < 0;
 
 **How to verify:**
 ```sql
-SELECT count(*) AS products_not_matching_logged_net_change
+SELECT count(*) AS products_not_matching_logged_net_change_unverified
 FROM (
     SELECT p.product_id
     FROM products p

@@ -14,8 +14,13 @@
 
   Exit code 0 only if every step passes.
 
+  Tested on Windows PowerShell 5.1. It only uses cross-platform cmdlets, docker
+  and the venv's Python, so it is written to run under PowerShell 7 (pwsh) on
+  macOS/Linux too, but that has not been tested.
+
 .EXAMPLE
-  .\scripts\validate_all.ps1
+  .\scripts\validate_all.ps1          # Windows
+  pwsh ./scripts/validate_all.ps1     # macOS/Linux with PowerShell 7
 #>
 param(
     [int]$RaceRuns = 3,
@@ -27,9 +32,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
-$Python = Join-Path $Root ".venv\Scripts\python.exe"
-$RaceTest = Join-Path $Root "data\race_test.py"
-$EvidencePath = Join-Path $Root "evidence\final_validation.md"
+# Windows venvs keep Python in Scripts\, macOS/Linux venvs in bin/.
+$Python = @(
+    (Join-Path $Root ".venv/Scripts/python.exe"),
+    (Join-Path $Root ".venv/bin/python")
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $Python) { throw "No .venv found. Create it first (README step 2)." }
+$RaceTest = Join-Path $Root "data/race_test.py"
+$EvidencePath = Join-Path $Root "evidence/final_validation.md"
+# Local lab password; same default and override variable as docker-compose.yml.
+$DbPassword = if ($env:POSTGRES_PASSWORD) { $env:POSTGRES_PASSWORD } else { "postgres" }
 $Db = "kloudkart_validate_" + (Get-Date -Format "yyyyMMddHHmmss")
 $Results = New-Object System.Collections.Generic.List[object]
 $Detail = New-Object System.Collections.Generic.List[string]
@@ -80,7 +92,7 @@ try {
     # 2. Fresh load + run_all (includes assertions)
     [void](Invoke-Native { docker exec $Container createdb -U postgres $Db })
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $run = Invoke-Native { docker exec $Container psql -X -q -U postgres -d $Db -v ON_ERROR_STOP=1 -f /sql/run_all.sql }
+    $run = Invoke-Native { docker exec $Container psql -X -q -U postgres -d $Db -v ON_ERROR_STOP=1 -v confirm_reload=yes -f /sql/run_all.sql }
     $sw.Stop()
     $oks = @($run.Output | Where-Object { $_ -match "NOTICE:  ok  " })
     $fails = @($run.Output | Where-Object { $_ -match "VALIDATION FAILED|ERROR:" })
@@ -91,7 +103,8 @@ try {
     if ($run.Code -ne 0) { $run.Output | Select-Object -Last 20 | Write-Host; throw "run_all.sql failed" }
 
     # 3. Race test, unmodified, N times
-    $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:${HostPort}/$Db"
+    # Local-only connection string for the disposable database; removed below.
+    $env:DATABASE_URL = "postgresql://postgres:${DbPassword}@localhost:${HostPort}/$Db"
     $passes = 0
     $walls = @()
     for ($i = 1; $i -le $RaceRuns; $i++) {

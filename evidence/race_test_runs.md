@@ -7,9 +7,9 @@
 
 | Run | Result | Test 1 (2 buyers, 1 unit, 25 rounds) | Test 2 (400 buyers, 50 units) | Test 3 (oversized order) | Test 4 (trail) |
 |---|---|---|---|---|---|
-| 1 | PASS | 25/25 one winner | 50 sold, 350 refused, 0 errors, 3.39 s | refused, stock untouched | 5 sold, 6 movements* |
-| 2 | PASS | 25/25 | 50 / 350 / 0, 2.96 s | refused | 5 sold, 6 movements* |
-| 3 | PASS | 25/25 | 50 / 350 / 0, 3.13 s | refused | 5 sold, 6 movements* |
+| 1 | PASS | 25/25 one winner | 50 sold, 350 refused, 0 errors, 2.77 s | refused, stock untouched | 5 sold, 6 movements* |
+| 2 | PASS | 25/25 | 50 / 350 / 0, 2.65 s | refused | 5 sold, 6 movements* |
+| 3 | PASS | 25/25 | 50 / 350 / 0, 3.71 s | refused | 5 sold, 6 movements* |
 
 \* 5 sales plus the fixture product's `opening_stock` movement, written by the safety-net trigger when the test inserts its product.
 
@@ -17,6 +17,6 @@ Full captured output of each run: [final_validation.md](final_validation.md).
 
 ## History
 
-The previous validation run (same code, before the CSV pre-flight step was added) gave 2.49 s, 2.77 s and 2.82 s for Test 2. The spread between runs is normal laptop variation; every run is well inside marketing's 10-second window.
+Earlier validation runs of the same ordering code gave 2.49 / 2.77 / 2.82 s and 3.39 / 2.96 / 3.13 s for Test 2. The latest run above is on the digest-pinned image (`postgres:16.16@sha256:07abc3f4…`, the same image as all earlier runs) with the CSV pre-flight and `run_all.sql` reload guard in place. The spread between runs (2.5–3.7 s) is normal laptop variation; every run is well inside marketing's 10-second window.
 
 The first recorded pass (2026-11-26, before the stock-logging trigger) completed Test 2 in 2.65 s. It needed `max_connections` raised by hand from 100 to 450. With the PostgreSQL default of 100, Test 2 fails with "too many clients" before order placement is exercised. That requirement is now in `docker-compose.yml`.

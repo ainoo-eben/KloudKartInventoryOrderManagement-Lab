@@ -1,20 +1,28 @@
 services:
   db:
-    image: postgres:16
+    # Pinned by digest to the exact image every recorded result was measured on
+    # (PostgreSQL 16.16, Debian 16.16-1.pgdg13+1). A tag alone is not a pin:
+    # "postgres:16" and even "postgres:16.16" are rebuilt upstream over time.
+    image: postgres:16.16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8
     container_name: kloudkart-db
     # race_test.py opens 400 simultaneous connections (flash-sale test).
     # PostgreSQL's default of 100 makes ~300 of them fail with "too many
     # clients". 500 leaves headroom for psql/admin sessions. See ADR-009.
     command: ["postgres", "-c", "max_connections=500"]
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres      # match whatever race_test.py expects
+      # LOCAL LAB CREDENTIALS ONLY. Never reuse them on a shared or production
+      # server. To change the password, copy .env.example to .env (ignored by
+      # Git) and edit it; it only takes effect when the pgdata volume is first
+      # created. race_test.py has no built-in credentials: it reads whatever
+      # DATABASE_URL you give it, which must match these values.
+      POSTGRES_USER: postgres          # fixed: the scripts and READMEs use -U postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: kloudkart
     ports:
       - "5432:5432"                    # use "5433:5432" if 5432 is already taken on your machine
     volumes:
       - pgdata:/var/lib/postgresql/data   # keeps the data between restarts
-      - ./data:/data:ro               # your bundle files, read-only inside the container
-      - ./sql:/sql:ro                     # your numbered SQL files
+      - ./data:/data:ro                   # supplied bundle, read-only inside the container
+      - ./sql:/sql:ro                     # solution SQL files, read-only
 volumes:
   pgdata:

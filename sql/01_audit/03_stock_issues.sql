@@ -17,7 +17,11 @@ WHERE NOT EXISTS (
     SELECT 1 FROM inventory_log il WHERE il.product_id = p.product_id
 );
 
-SELECT count(*) AS products_not_matching_logged_net_change
+-- WARNING: provisional, not proof of error. The log has no opening-stock
+-- entries, so a product can differ here simply because its starting balance
+-- was never logged. Report this count as "unverified" (diagnosis finding 2)
+-- until a physical count or trusted opening balance is available.
+SELECT count(*) AS products_not_matching_logged_net_change_unverified
 FROM (
     SELECT p.product_id
     FROM products p
