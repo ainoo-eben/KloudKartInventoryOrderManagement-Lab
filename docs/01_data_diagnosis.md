@@ -22,7 +22,8 @@ Kloud Kart Ltd. data audit results. Every problem found, how it was detected, wh
 1. **Fresh load:** Ran `data/schema.sql` then `data/load.sql` into a clean PostgreSQL database.
 2. **Ran 8 audit query files** in `sql/01_audit/` — each file targets one class of problem (NULLs, duplicates, stock issues, referential integrity, category tree, customer data, financial data, general quality).
 3. **Recorded counts** of offending rows for each check.
-4. **Ranked by danger** to Nana's business: Critical → High → Medium → Low.
+4. **Sized in cedis** with [`09_financial_impact.sql`](../sql/01_audit/09_financial_impact.sql). These are *recorded* values (order totals, receipt lines, or stock units × catalogue price) that each problem puts at risk. They are not a loss figure and not verified payments.
+5. **Ranked by danger** to Nana's business: Critical → High → Medium. Danger means *harm to customers or stock that is happening now* first (overselling, stock you can't trust), then *money misreported to decision-makers*, then *gaps that make a report incomplete*. Size in GHS breaks ties inside a band. Provisional findings are marked as such rather than demoted.
 
 You can re-run any check yourself:
 
@@ -48,6 +49,8 @@ FROM products WHERE stock_quantity < 0;
 ```
 
 **Cost to Nana:** The database believes Kloud Kart owes inventory it doesn't have. These products are already oversold beyond zero. Any new order for them deepens the hole.
+
+**GHS at stake:** **GHS 20,627.76** of goods sold that did not exist (units below zero × catalogue price). Small in money, but every unit is a customer who paid for stock that wasn't there, which is exactly the refund-and-apology cost Nana described. `place_order` now refuses any sale against these products until stock is corrected through `adjust_stock`.
 
 ---
 
@@ -81,6 +84,8 @@ FROM (
 ```
 
 **Cost to Nana:** If the log is meant to account for all stock from a known starting point, these products cannot be reconciled and their available quantities may be unreliable. Confirm the opening-balance convention before treating this as a proven variance.
+
+**GHS at stake:** **GHS 3,865,699.34** of stock is unexplained (|stock − logged net| × catalogue price), *if* the log is meant to start from zero. This is the upper bound of the risk, not a measured loss. A physical count of these 144 products, recorded with `adjust_stock(..., 'stock_take'/'correction', note)`, settles it.
 
 ---
 
@@ -123,6 +128,10 @@ ORDER BY orders DESC, exact_status;
 
 **Cost to Nana:** This can materially change every customer's reported spend, order count, and ranking—not just make a label look inconsistent. Until the statuses are mapped to clear business meanings, Adwoa's report could silently omit valid purchases or count cancelled/refunded money.
 
+**GHS at stake (the largest money risk in the data):**
+- An exact `status = 'completed'` filter misses **GHS 314,085,575.11** of real spend across 102,108 orders (other spellings, `complete`, and `shipped`).
+- A report that ignores status counts **GHS 57,998,056.34** of cancelled/refunded orders (19,176) and **GHS 48,499,632.57** of pending orders (16,009) as customer spend.
+
 ---
 
 ### 4. Order totals and receipt lines do not reconcile — 2,426 orders (HIGH)
@@ -150,6 +159,8 @@ FROM order_items;
 
 **Cost to Nana:** The mismatches are real differences, but they do not prove which side is wrong. They could reflect unrecorded fees/discounts, missing line prices, or bad totals. Do not assume either `orders.total_amount` or the receipt lines are authoritative until those rules and missing prices are checked; otherwise customer-spend totals may be wrong.
 
+**GHS at stake:** **GHS 5,214,733.92** gross difference across the 2,398 orders with calculable lines. The net difference is **−GHS 3,477,551.62**: stored totals are, on balance, *lower* than their receipt lines. That pattern fits unrecorded discounts better than fees, but the data can't prove it.
+
 ---
 
 ### 5. order_items referencing missing orders — 692 line items (HIGH)
@@ -163,6 +174,8 @@ WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.order_id = oi.order_id);
 ```
 
 **Cost to Nana:** These sales are invisible to the orders table. Revenue is understated, customer order counts are wrong, and the audit trail has gaps.
+
+**GHS at stake:** **GHS 826,327.80** of receipt lines (quantity × unit price) belong to no order and appear in no report.
 
 ---
 
@@ -178,6 +191,8 @@ WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.customer_id = o.customer_id)
 
 **Cost to Nana:** Adwoa cannot attribute spend to a real customer. Top-100 customer ranking and per-customer totals are incomplete. These customers effectively don't exist in the report.
 
+**GHS at stake:** **GHS 665,180.61** across all 210 orders; **GHS 427,668.87** of that (155 orders) has a spending status and is therefore missing from the customer report. The exceptions report lists each order.
+
 ---
 
 ### 7. inventory_log referencing missing products — 120 entries (HIGH)
@@ -191,6 +206,8 @@ WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.product_id = il.product_id);
 ```
 
 **Cost to Nana:** The audit trail is broken. An auditor walking through stock movements for these products hits dead ends. This violates Nana's requirement for a complete trail of every stock movement.
+
+**GHS at stake:** not priceable (the products don't exist, so there's no catalogue price); 120 units moved. **Going forward:** the restored foreign key (`NOT VALID`) rejects new movements for unknown products, and every new stock change is logged, through `place_order`, `adjust_stock`, or the safety-net trigger (see [ADR-002](../decisions/ADR-002-stock-movements-legacy.md)).
 
 ---
 
@@ -209,6 +226,8 @@ WHERE created_at >= DATE '2026-09-01';
 
 **Cost to Nana:** Monthly reports can include transactions beyond the apparent period covered by the extract, making the latest months misleading without an obvious error. The inventory notebook's timeline can also be out of sequence. Treat these rows as suspect until their dates are checked against source records.
 
+**GHS at stake:** **GHS 68,040.02** of order value dated after the cutoff.
+
 ---
 
 ### 9. Products without a category — 37 products (MEDIUM)
@@ -223,6 +242,8 @@ WHERE category_id IS NULL
 ```
 
 **Cost to Nana:** Low-stock visibility rolled up through the category tree will miss these 37 products entirely. The rollup is incomplete.
+
+**GHS at stake:** **GHS 3,281,371.20** of stock (stock × catalogue price) sits outside every category total. The rollup shows these products in a separate "Uncategorized or missing category" row so they are not lost.
 
 ---
 
@@ -249,6 +270,8 @@ ORDER BY c.category_id;
 
 **Cost to Nana:** A rollup that starts from roots silently misses all three categories. A traversal started inside the 9001/9002 loop can repeat forever if it does not track visited categories.
 
+**GHS at stake:** **GHS 1,703,522.60** of stock (6 products in the Promotions/Seasonal Promotions loop; Clearance has none) would be invisible in a root-based rollup. `low_stock_rollup()` lists these categories separately, marked unreachable, so they still appear.
+
 ---
 
 ### 11. Duplicate customer emails — 533 groups after normalization (MEDIUM)
@@ -267,6 +290,8 @@ SELECT count(*) FROM (
 ```
 
 **Cost to Nana:** Customer dedup is unreliable. One real customer may appear as multiple rows, inflating customer counts and splitting their spend across fake identities. Top-100 ranking and per-customer totals are distorted.
+
+**GHS at stake:** **GHS 9,714,556.53** of spend belongs to the 1,068 customer rows that share a normalized email. If those are the same people, their spend is split and they may be ranked lower than they should be. Shared emails can also be legitimate (families, businesses), so the rows were not merged.
 
 ---
 
@@ -294,19 +319,21 @@ SELECT count(*) FROM (
 
 ## Summary Table
 
-| Rank | Problem | Affected | Danger | Nana's Cost |
-|------|---------|----------|--------|-------------|
-| 1 | Negative product stock | 14 products | Critical | Confirmed oversell evidence; stock is below zero |
-| 2 | Stock/log net-change mismatch (baseline unverified) | 144 products | High, provisional | Stock accuracy cannot be confirmed without the opening-balance rule |
-| 3 | Free-text order statuses | 15 spellings across 159,384 orders | High | Spend and customer rankings may omit or include the wrong orders |
-| 4 | Order total and receipt-line differences | 2,426 orders; 148 NULL-priced lines | High | Neither stored total nor line sum is proven authoritative |
-| 5 | order_items missing order | 692 line items | High | Revenue understated, order counts wrong |
-| 6 | Orders missing customer | 210 orders | High | Per-customer totals incomplete |
-| 7 | inventory_log missing product | 120 entries | High | Broken audit trail for auditor |
-| 8 | Dates after August 2026 data end point | 24 orders; 40 inventory entries | Medium | Monthly report and movement timeline may be misleading |
-| 9 | Products without category | 37 products | Medium | Low-stock rollup incomplete |
-| 10 | Categories unreachable from roots | 3 categories | Medium | Cycle and missing parent make the category rollup incomplete |
-| 11 | Duplicate customer emails after normalization | 533 groups | Medium | Customer dedup unreliable, spend split |
+| Rank | Problem | Affected | Danger | GHS at stake (recorded values) | Nana's Cost |
+|------|---------|----------|--------|---------------:|-------------|
+| 1 | Negative product stock | 14 products | Critical | 20,627.76 | Confirmed oversell evidence; stock is below zero |
+| 2 | Stock/log net-change mismatch (baseline unverified) | 144 products | High, provisional | up to 3,865,699.34 | Stock accuracy cannot be confirmed without the opening-balance rule |
+| 3 | Free-text order statuses | 15 spellings across 159,384 orders | High | 314,085,575.11 missed by exact match; 106,497,688.91 non-spend counted if status ignored | Spend and customer rankings may omit or include the wrong orders |
+| 4 | Order total and receipt-line differences | 2,426 orders; 148 NULL-priced lines | High | 5,214,733.92 gross (net −3,477,551.62) | Neither stored total nor line sum is proven authoritative |
+| 5 | order_items missing order | 692 line items | High | 826,327.80 | Revenue understated, order counts wrong |
+| 6 | Orders missing customer | 210 orders | High | 665,180.61 (427,668.87 dropped from report) | Per-customer totals incomplete |
+| 7 | inventory_log missing product | 120 entries | High | not priceable (120 units) | Broken audit trail for auditor |
+| 8 | Dates after August 2026 data end point | 24 orders; 40 inventory entries | Medium | 68,040.02 | Monthly report and movement timeline may be misleading |
+| 9 | Products without category | 37 products | Medium | 3,281,371.20 of stock | Low-stock rollup incomplete |
+| 10 | Categories unreachable from roots | 3 categories (6 products) | Medium | 1,703,522.60 of stock | Cycle and missing parent make the category rollup incomplete |
+| 11 | Duplicate customer emails after normalization | 533 groups (1,068 customers) | Medium | 9,714,556.53 of spend split | Customer dedup unreliable, spend split |
+
+All GHS figures are reproduced by [`sql/01_audit/09_financial_impact.sql`](../sql/01_audit/09_financial_impact.sql).
 
 ---
 
@@ -317,7 +344,7 @@ SELECT count(*) FROM (
 | **Overselling fix** | Must prevent *any* sale when stock ≤ 0. The current app doesn't check atomically — two concurrent orders both see 1 unit, both succeed. |
 | **Report fix** | Must decide which statuses count as spend, reconcile `orders.total_amount` with receipt lines (including missing prices and possible fees/discounts), exclude or flag dates after the August 2026 data end point, handle duplicate customers, and run in seconds. |
 | **Category rollup** | Must tolerate missing parents, cycles, and orphans, track visited categories, and not hard-code depth. |
-| **Audit trail** | `place_order` records new sales with their order and stock change. The current solution does not yet force direct stock updates, restocks, and corrections through a logged operation. A trusted opening-stock baseline is also needed before historical stock/log differences can be verified. |
+| **Audit trail** | Every new stock change is logged: sales by `place_order`, restocks/returns/corrections/damage/stock takes by `adjust_stock` (with reason and note), and anything else, such as a manual `UPDATE`, by a safety-net trigger that records it as `unlogged_direct_update` with who made it. New products get an `opening_stock` movement. The *historical* 144 differences still need a trusted opening-stock count before they can be verified. |
 | **Schema changes** | Need foreign keys, check constraints, and indexes. Document every change so Nana's team can live with it. |
 
 ---
@@ -334,6 +361,7 @@ SELECT count(*) FROM (
 | `sql/01_audit/06_customer_issues.sql` | Exact and normalized duplicate customer emails |
 | `sql/01_audit/07_financial_issues.sql` | Order/line total differences and missing or non-positive prices |
 | `sql/01_audit/08_data_quality.sql` | Exact status counts and amounts, records after the August 2026 cutoff, and orders before registration |
+| `sql/01_audit/09_financial_impact.sql` | GHS at stake for each finding (recorded values, not verified payments) |
 
 Run any file with:
 ```bash
@@ -348,4 +376,5 @@ These findings feed into:
 
 - **`02_key_decisions.md`** — how we fix overselling (row-level locking in the order procedure, not triggers alone), how we make the report fast, and each assumption we made.
 - **`03_memo_to_nana.md`** — one-page business summary.
-- **`sql/02_schema_changes/`** — sequences, foreign keys, indexes, and constraints. A controlled, logged path for restocks and corrections remains a production follow-up; it is not implemented by these schema changes.
+- **`sql/02_schema_changes/`** — sequences, foreign keys, indexes, and constraints.
+- **`sql/03_ordering/02_stock_movements.sql`** — the logged path for restocks and corrections (`adjust_stock`) and the safety-net trigger that logs any other stock change.

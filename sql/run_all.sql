@@ -21,6 +21,7 @@
 \i /sql/01_audit/06_customer_issues.sql
 \i /sql/01_audit/07_financial_issues.sql
 \i /sql/01_audit/08_data_quality.sql
+\i /sql/01_audit/09_financial_impact.sql
 
 \echo 'Applying schema changes'
 \i /sql/02_schema_changes/01_id_sequences.sql
