@@ -29,8 +29,12 @@
 
 \echo 'Installing order placement and reporting functions'
 \i /sql/03_ordering/01_place_order.sql
+\i /sql/03_ordering/02_stock_movements.sql
 \i /sql/04_reporting/customer_spending_report.sql
 \i /sql/04_reporting/low_stock_rollup.sql
 \i /sql/05_improvement/01_data_quality_exceptions.sql
+
+\echo 'Running self-checking validation (rolled back; fails the run on any broken behaviour)'
+\i /sql/06_validation/01_assertions.sql
 
 \echo 'Complete. The slow baseline EXPLAIN ANALYZE and concurrent race harness are separate experiments.'
