@@ -3,6 +3,8 @@
   One-command end-to-end validation of the Kloud Kart solution on a fresh load.
 
 .DESCRIPTION
+  0. Pre-flight: checks the six CSVs (headers, field counts, IDs, row counts)
+     with scripts/preflight_csv.ps1 before anything is loaded.
   1. Checks the server allows enough connections for the 400-buyer test.
   2. Creates a disposable database and runs sql/run_all.sql (load, audits,
      schema changes, functions, and the self-checking assertions).
@@ -64,6 +66,12 @@ $raceHash = (Get-FileHash $RaceTest -Algorithm SHA256).Hash
 Write-Host "race_test.py SHA-256: $raceHash"
 
 try {
+    # 0. Pre-flight: refuse to load CSVs whose structure has changed
+    & (Join-Path $PSScriptRoot "preflight_csv.ps1") -DataDir (Join-Path $Root "data") | Out-Host
+    $preflightOk = ($LASTEXITCODE -eq 0)
+    Add-Result "CSV pre-flight (headers, fields, IDs, row counts)" $preflightOk $(if ($preflightOk) { "24 checks passed" } else { "see scripts/preflight_csv.ps1 output" })
+    if (-not $preflightOk) { throw "CSV pre-flight failed; not loading" }
+
     # 1. Connection limit
     $max = [int]((Invoke-Native { docker exec $Container psql -X -At -U postgres -c "SHOW max_connections" }).Output | Select-Object -Last 1)
     Add-Result "Server allows 400-buyer test" ($max -ge 450) "max_connections = $max (need >= 450; see ADR-009)"
