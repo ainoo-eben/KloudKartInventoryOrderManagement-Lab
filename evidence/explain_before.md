@@ -1,5 +1,7 @@
 # Before Report Plan and Timing
 
+> **Superseded:** this was the first attempt, stopped at a 120-second timeout. The like-for-like measurement (every customer, run to completion: **552 s**) and the index ablation are in [performance_before_after.md](performance_before_after.md).
+
 ## What this measures
 
 This is a representative performance proxy, not Adwoa's original report. It sums recorded `orders.total_amount` across all statuses. Those choices are for timing only; they do not establish which statuses count as spend or which amount is financially authoritative.
