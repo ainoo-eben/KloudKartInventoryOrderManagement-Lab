@@ -132,4 +132,45 @@ BEGIN
     PERFORM pg_temp.expect(NOT r.success, 'place_order: zero quantity refused');
 END $$;
 
+-- ---------------------------------------------------------------------------
+-- B. Customer spending report (Phase 3). Figures are for the supplied extract
+--    at the documented 2026-08-31 cutoff; they are checked against a fresh
+--    load, before any test orders are placed.
+-- ---------------------------------------------------------------------------
+CREATE TEMP TABLE report_check ON COMMIT DROP AS
+SELECT * FROM customer_spending_report(DATE '2026-08-31');
+
+DO $$
+BEGIN
+    PERFORM pg_temp.expect((SELECT count(*) FROM report_check) = (SELECT count(*) FROM customers),
+        'report returns one row per customer');
+    PERFORM pg_temp.expect(
+        (SELECT min(customer_rank) = 1 AND max(customer_rank) = count(*)
+                AND count(DISTINCT customer_rank) = count(*) FROM report_check),
+        'ranks are 1..N with no gaps or ties');
+    PERFORM pg_temp.expect((SELECT count(*) FROM report_check WHERE is_top_100) = 100,
+        'exactly 100 customers flagged top-100');
+    PERFORM pg_temp.expect(
+        (SELECT bool_and(jsonb_array_length(trailing_12_months) = 12) FROM report_check),
+        'every customer has exactly 12 monthly entries');
+    PERFORM pg_temp.expect(
+        (SELECT bool_and((trailing_12_months->11->>'lifetime_running_spend')::numeric = total_spent)
+           FROM report_check),
+        'final month lifetime_running_spend equals total_spent for every customer');
+    PERFORM pg_temp.expect(
+        (SELECT bool_and((trailing_12_months->11->>'running_spend')::numeric
+                 = (SELECT sum((m->>'spend')::numeric) FROM jsonb_array_elements(trailing_12_months) m))
+           FROM report_check),
+        'running_spend in the final month equals the sum of the 12 monthly values');
+    -- 159,360 = 159,384 loaded orders minus the 24 dated after the cutoff.
+    -- Section A's test order is dated today (after the cutoff), so it does
+    -- not affect this check.
+    IF (SELECT count(*) FROM orders WHERE order_date < TIMESTAMP '2026-09-01') = 159360 THEN
+        PERFORM pg_temp.expect((SELECT sum(total_spent) FROM report_check) = 380090162.62,
+            'fresh load: total reported spend = 380,090,162.62 (unchanged from reporting_after.md)');
+    ELSE
+        RAISE NOTICE 'skip fresh-load total check: orders table has been modified since load';
+    END IF;
+END $$;
+
 ROLLBACK;

@@ -1,6 +1,11 @@
 -- Customer spending report.
 -- Spending statuses and amount source follow ADR-003 and ADR-004.
 -- The as-of date defaults to the supplied extract's cutoff (ADR-005).
+--
+-- "Running per-customer total" (brief) is ambiguous, so each month carries both:
+--   running_spend           cumulative spend inside the trailing 12 months
+--   lifetime_running_spend  cumulative spend since the customer's first order;
+--                           the final month always equals total_spent.
 
 CREATE OR REPLACE FUNCTION public.customer_spending_report(
     p_as_of date DEFAULT DATE '2026-08-31'
@@ -46,8 +51,13 @@ BEGIN
         SELECT
             eo.customer_id,
             sum(eo.total_amount) AS total_spent,
-            count(*)::bigint AS order_count
+            count(*)::bigint AS order_count,
+            coalesce(
+                sum(eo.total_amount) FILTER (WHERE eo.order_date < b.first_month::timestamp),
+                0::numeric
+            ) AS spend_before_window
         FROM eligible_orders AS eo
+        CROSS JOIN bounds AS b
         GROUP BY eo.customer_id
     ),
     monthly_sales AS (
@@ -89,8 +99,11 @@ BEGIN
                 PARTITION BY cm.customer_id
                 ORDER BY cm.month_start
                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-            ) AS running_spend
+            ) AS running_spend,
+            coalesce(ct.spend_before_window, 0::numeric) AS spend_before_window
         FROM customer_months AS cm
+        LEFT JOIN customer_totals AS ct
+          ON ct.customer_id = cm.customer_id
     ),
     monthly_payload AS (
         SELECT
@@ -99,7 +112,8 @@ BEGIN
                 jsonb_build_object(
                     'month', to_char(mr.month_start, 'YYYY-MM'),
                     'spend', mr.monthly_spend,
-                    'running_spend', mr.running_spend
+                    'running_spend', mr.running_spend,
+                    'lifetime_running_spend', mr.spend_before_window + mr.running_spend
                 )
                 ORDER BY mr.month_start
             ) AS trailing_12_months
