@@ -35,6 +35,8 @@ Reachable category counts include their reachable descendants. Summing those cou
 
 The representative baseline query in [explain_before.md](explain_before.md) did not complete within its **120-second** statement timeout. The new report returned the full 40,420-customer result in about **3.85 seconds** on this test setup.
 
+**Superseded by a like-for-like comparison:** see [performance_before_after.md](performance_before_after.md): the full old-style report measured 552 s on the original schema vs ~3 s for the new report, plus an index ablation. The note below described the earlier 120-second-timeout comparison.
+
 This is strong evidence of improvement, but not an exact apples-to-apples speedup: the original was a representative proxy rather than Adwoa's supplied query, the old run was cut off at 120 seconds, and the final report applies the documented status and amount rules.
 
 ## Reproduction
