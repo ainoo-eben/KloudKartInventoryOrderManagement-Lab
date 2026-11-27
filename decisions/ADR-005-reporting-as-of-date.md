@@ -6,7 +6,7 @@
 
 ## Context
 
-The orders table spans Aug 2025 to Aug 2027. Orders grow steadily from ~2,000/month (Aug 2025) to a peak of ~36,000/month (Aug 2026), then drop to near-zero. There are 16 future-dated orders (Nov 2026 through Aug 2027). The peak month (Aug 2026) has 36,357 orders; every subsequent month has 5 or fewer. The "live" data effectively ends in Aug 2026.
+The orders table spans Aug 2025 to Aug 2027. Orders grow steadily from ~2,000/month (Aug 2025) to a peak of ~36,000/month (Aug 2026), then drop to near-zero. There are **24 orders dated after the 2026-08-31 cutoff** (plus 40 inventory-log rows): 9 dated between 1 September and 27 November 2026, and 15 dated after today (December 2026 through August 2027), i.e. genuinely in the future. These are the figures in [the diagnosis](../docs/01_data_diagnosis.md), finding 8. The peak month (Aug 2026) has 36,357 orders; every subsequent month has 5 or fewer. The "live" data effectively ends in Aug 2026.
 
 ## Decision
 
@@ -20,7 +20,7 @@ Make the as-of date an explicit report parameter. Do not permanently hard-code A
 
 - **How it would work:** Filter `order_date <= now()` and include all rows up to today.
 - **Why it is attractive:** No manual cutoff; adapts automatically.
-- **Why rejected:** `now()` in the container is Nov 2026, which would include the 16 suspect future orders. The data has an artificial boundary at Aug 2026; using `now()` silently includes questionable data.
+- **Why rejected:** `now()` in the container is Nov 2026, which would include the 9 suspect post-cutoff orders dated before today, and would start including the 15 future-dated ones as their dates pass. The data has an artificial boundary at Aug 2026; using `now()` silently includes questionable data.
 
 ### Alternative B: Hard-code Aug 2026 permanently
 
@@ -30,14 +30,14 @@ Make the as-of date an explicit report parameter. Do not permanently hard-code A
 
 ### Alternative C: Exclude future orders only (order_date <= now())
 
-- **How it would work:** `WHERE order_date <= now()` — excludes only the 16 future-dated rows.
+- **How it would work:** `WHERE order_date <= now()` — excludes only the 15 rows dated after today.
 - **Why it is attractive:** Minimal change; keeps the most data.
-- **Why rejected:** The drop from 36K to 5 orders/month after Aug 2026 is a data-quality signal, not just 16 bad rows. The 16 future orders are the tip of the iceberg; the entire post-Aug 2026 period is suspect.
+- **Why rejected:** The drop from 36K to 5 orders/month after Aug 2026 is a data-quality signal, not just 15 bad rows. The future-dated orders are the tip of the iceberg; the entire post-Aug 2026 period (24 orders, GHS 68,040.02) is suspect.
 
 ## Consequences
 
 - **What this buys:** A clean, defensible reporting window that excludes suspect data.
-- **What this costs:** 16 orders (and any post-Aug 2026 data) are excluded from the report until verified.
+- **What this costs:** 24 orders (GHS 68,040.02) and 40 inventory-log rows dated after the cutoff are excluded from the report until verified.
 - **What it costs the client if I am wrong:** If the post-Aug 2026 orders are actually legitimate (e.g., pre-orders), the report understates recent spend. Mitigation: flagged, not deleted; can be included later.
 - **What would make me revisit this:** Nana's team confirms the post-Aug 2026 orders are real.
 
