@@ -6,6 +6,9 @@ CREATE SEQUENCE IF NOT EXISTS public.orders_order_id_seq;
 CREATE SEQUENCE IF NOT EXISTS public.order_items_order_item_id_seq;
 CREATE SEQUENCE IF NOT EXISTS public.inventory_log_log_id_seq;
 
+-- Why? If the table/column is dropped later:
+--   PostgreSQL knows the sequence should go too. Without ownership, orphan sequences can be left behind.
+
 ALTER SEQUENCE public.orders_order_id_seq
     OWNED BY public.orders.order_id;
 ALTER SEQUENCE public.order_items_order_item_id_seq
